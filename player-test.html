@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Player Test</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; font-family:'Courier New',monospace; touch-action:none; }
+canvas { display:block; position:fixed; top:0; left:0; }
+
+#hud {
+  position:fixed; top:14px; left:14px;
+  color:#444; font-size:10px; line-height:2.0;
+  pointer-events:none; user-select:none; z-index:10;
+}
+#hud span { color:#aaa; }
+
+#status {
+  position:fixed; top:14px; right:14px;
+  color:#444; font-size:10px; letter-spacing:1px;
+  text-transform:uppercase; text-align:right;
+  pointer-events:none; z-index:10;
+}
+#status.ok  { color:#4a8; }
+#status.err { color:#a44; }
+
+#anim-bar {
+  position:fixed; bottom:54px; left:50%;
+  transform:translateX(-50%);
+  display:flex; gap:5px; pointer-events:none; z-index:10;
+}
+.tag {
+  background:rgba(0,0,0,0.7); border:1px solid #1a1a1a;
+  color:#252525; font-size:9px; letter-spacing:2px;
+  text-transform:uppercase; padding:4px 9px;
+  transition:color 0.12s, border-color 0.12s;
+}
+.tag.on { border-color:#666; color:#bbb; }
+
+#kb-hint {
+  position:fixed; bottom:20px; left:50%;
+  transform:translateX(-50%);
+  color:#252525; font-size:9px; letter-spacing:2px;
+  text-transform:uppercase; pointer-events:none;
+  white-space:nowrap; z-index:10;
+}
+
+/* Pause */
+#pause {
+  position:fixed; inset:0; background:rgba(0,0,0,0.92);
+  display:none; flex-direction:column;
+  align-items:center; justify-content:center;
+  z-index:200; backdrop-filter:blur(4px);
+}
+#pause.on { display:flex; }
+#pause h2 { color:#fff; font-size:22px; letter-spacing:6px; margin-bottom:36px; font-weight:normal; }
+.pbtn {
+  background:none; border:1px solid #2a2a2a; color:#555;
+  font-family:'Courier New',monospace; font-size:10px;
+  letter-spacing:3px; text-transform:uppercase;
+  padding:11px 44px; cursor:pointer; margin:4px; width:240px;
+  transition:all 0.2s; -webkit-tap-highlight-color:transparent;
+}
+.pbtn:hover, .pbtn:active { border-color:#777; color:#ccc; }
+
+/* ── TOUCH UI ────────────────────────────────────────────────────────────── */
+#touch-ui { display:none; position:fixed; inset:0; z-index:20; pointer-events:none; }
+
+/* Joystick */
+#joy-zone {
+  position:absolute; left:0; bottom:0; width:46%; height:58%;
+  pointer-events:all;
+}
+#joy-base {
+  position:absolute; width:118px; height:118px; border-radius:50%;
+  background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.10);
+  display:none;
+}
+#joy-knob {
+  position:absolute; top:50%; left:50%; width:46px; height:46px;
+  border-radius:50%; background:rgba(255,255,255,0.18);
+  border:1px solid rgba(255,255,255,0.32);
+  transform:translate(-50%,-50%);
+}
+
+/* Look zone */
+#look-zone {
+  position:absolute; right:0; bottom:0; width:54%; height:58%;
+  pointer-events:all;
+}
+
+/* Buttons — bottom-right column */
+#touch-btns {
+  position:absolute; right:18px; bottom:80px;
+  display:flex; flex-direction:column; gap:10px;
+  pointer-events:all;
+}
+.t-btn {
+  width:58px; height:58px; border-radius:50%;
+  background:rgba(255,255,255,0.06);
+  border:1px solid rgba(255,255,255,0.16);
+  color:#bbb; font-size:9px; letter-spacing:1.5px;
+  text-transform:uppercase;
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; user-select:none;
+  -webkit-tap-highlight-color:transparent;
+  pointer-events:all;
+  transition:background 0.08s, border-color 0.08s;
+}
+.t-btn:active { background:rgba(255,255,255,0.18); border-color:rgba(255,255,255,0.45); }
+#tb-jump { border-color:rgba(100,170,255,0.3); }
+#tb-jump:active { background:rgba(100,170,255,0.18); }
+
+/* Sprint toggle — left above joystick */
+#tb-sprint {
+  position:absolute; left:18px; bottom:175px;
+  pointer-events:all;
+}
+#tb-sprint.on {
+  background:rgba(255,190,60,0.14);
+  border-color:rgba(255,190,60,0.45); color:#fc8;
+}
+
+/* Enter/exit vehicle — center bottom, shown when near */
+#tb-enter {
+  position:absolute; left:50%; bottom:18px;
+  transform:translateX(-50%);
+  width:auto; padding:0 24px; border-radius:22px; height:44px;
+  font-size:9px; letter-spacing:2px;
+  pointer-events:all;
+  opacity:0; transition:opacity 0.25s; pointer-events:none;
+}
+#tb-enter.show { opacity:1; pointer-events:all; }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="hud">
+  STATE: <span id="h-state">IDLE</span><br>
+  SPEED: <span id="h-speed">0.0</span><br>
+  POS:   <span id="h-pos">0,0,0</span><br>
+  CAM:   <span id="h-cam">LOCKED</span><br>
+  VEH:   <span id="h-veh">—</span>
+</div>
+<div id="status">Loading...</div>
+
+<div id="anim-bar">
+  <div class="tag on" id="t-idle">Idle</div>
+  <div class="tag" id="t-walk">Walk</div>
+  <div class="tag" id="t-run">Run</div>
+  <div class="tag" id="t-jump">Jump</div>
+  <div class="tag" id="t-fall">Fall</div>
+  <div class="tag" id="t-land">Land</div>
+  <div class="tag" id="t-climb">Climb</div>
+</div>
+
+<div id="kb-hint">WASD · SHIFT · SPACE · F · ESC &nbsp;|&nbsp; Click to lock mouse</div>
+
+<!-- Touch UI (shown only on touch devices) -->
+<div id="touch-ui">
+  <div id="joy-zone">
+    <div id="joy-base"><div id="joy-knob"></div></div>
+  </div>
+  <div id="look-zone"></div>
+  <div class="t-btn" id="tb-sprint">RUN</div>
+  <div id="touch-btns">
+    <div class="t-btn" id="tb-jump">JUMP</div>
+  </div>
+  <div class="t-btn" id="tb-enter">ENTER</div>
+</div>
+
+<div id="pause">
+  <h2>PAUSED</h2>
+  <button class="pbtn" id="p-resume">▶&nbsp; Resume</button>
+  <button class="pbtn" id="p-reset">↺&nbsp; Reset Position</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script>
+'use strict';
+
+if (typeof THREE === 'undefined') {
+  document.body.innerHTML = '<p style="color:#f88;padding:20px;font-family:monospace">THREE.js CDN failed — refresh</p>'; throw 0;
+}
+if (typeof THREE.GLTFLoader === 'undefined') {
+  document.body.innerHTML = '<p style="color:#f88;padding:20px;font-family:monospace">GLTFLoader CDN failed — refresh</p>'; throw 0;
+}
+
+// ── RENDERER ──────────────────────────────────────────────────────────────────
+var canvas   = document.getElementById('c');
+var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
+
+var scene  = new THREE.Scene();
+scene.background = new THREE.Color(0x0e0e0e);
+scene.fog        = new THREE.Fog(0x0e0e0e, 35, 85);
+
+var camera = new THREE.PerspectiveCamera(62, 1, 0.1, 200);
+
+function resize() {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ── LIGHTS ────────────────────────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+var sun = new THREE.DirectionalLight(0xfff8ee, 1.0);
+sun.position.set(10, 18, 8);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 90;
+sun.shadow.camera.left = sun.shadow.camera.bottom = -35;
+sun.shadow.camera.right = sun.shadow.camera.top   =  35;
+scene.add(sun);
+var fill = new THREE.DirectionalLight(0x8899cc, 0.35);
+fill.position.set(-6, 8, -6);
+scene.add(fill);
+
+// ── GROUND ────────────────────────────────────────────────────────────────────
+var ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(140, 140),
+  new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 1 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+scene.add(new THREE.GridHelper(140, 140, 0x242424, 0x1c1c1c));
+
+// ── OBSTACLES ─────────────────────────────────────────────────────────────────
+var obstacles = [];
+function addBox(x, z, w, h, d) {
+  var mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({ color: 0x383838, roughness: 0.85 })
+  );
+  mesh.position.set(x, h / 2, z);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  scene.add(mesh);
+  mesh.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(mesh.geometry),
+    new THREE.LineBasicMaterial({ color: 0x555555 })
+  ));
+  obstacles.push({ x: x, z: z, hw: w / 2, hd: d / 2, h: h });
+}
+addBox(  6,  0, 2.0, 1.5, 2.0);
+addBox( -6,  0, 2.0, 1.5, 2.0);
+addBox(  0,  8, 7.0, 0.9, 1.0);
+addBox(  9,  6, 1.5, 2.5, 1.5);
+
+// ── PLAYER SETUP ─────────────────────────────────────────────────────────────
+var pivot = new THREE.Object3D();
+scene.add(pivot);
+
+var blob = new THREE.Mesh(
+  new THREE.CircleGeometry(0.28, 16),
+  new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 })
+);
+blob.rotation.x = -Math.PI / 2; blob.position.y = 0.02;
+pivot.add(blob);
+
+var playerModel = null;
+var mixer       = null;
+var modelReady  = false;
+var spineBone   = null;
+var actions     = {};
+var curAction   = null;
+var curName     = '';
+
+var gltfLoader = new THREE.GLTFLoader();
+var statusEl   = document.getElementById('status');
+
+function playAnim(name, fade, loop) {
+  if (fade === undefined) fade = 0.22;
+  if (loop === undefined) loop = true;
+  if (name === curName) return;
+  var next = actions[name];
+  if (!next) { name = 'idle'; next = actions['idle']; }
+  if (!next) return;
+  if (curAction) curAction.fadeOut(fade);
+  next.reset();
+  if (!loop) { next.setLoop(THREE.LoopOnce, 1); next.clampWhenFinished = true; }
+  next.fadeIn(fade).play();
+  curAction = next; curName = name;
+}
+
+gltfLoader.load(
+  'https://threejs.org/examples/models/gltf/Soldier.glb',
+  function(gltf) {
+    playerModel = gltf.scene;
+    playerModel.traverse(function(o) {
+      if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+      if (o.isBone) {
+        var n = o.name.toLowerCase();
+        if (!spineBone && (n.indexOf('spine') !== -1 || n.indexOf('chest') !== -1)) spineBone = o;
+      }
+    });
+    var box = new THREE.Box3().setFromObject(playerModel);
+    var sz  = new THREE.Vector3(); box.getSize(sz);
+    playerModel.scale.setScalar(1.8 / sz.y);
+    box.setFromObject(playerModel);
+    playerModel.position.y = -box.min.y;
+    playerModel.rotation.y = Math.PI;
+    pivot.add(playerModel);
+
+    mixer = new THREE.AnimationMixer(playerModel);
+    gltf.animations.forEach(function(clip) {
+      var n = clip.name.toLowerCase();
+      var a = mixer.clipAction(clip);
+      if      (n.indexOf('idle') !== -1) actions.idle = a;
+      else if (n.indexOf('walk') !== -1) actions.walk = a;
+      else if (n.indexOf('run')  !== -1) actions.run  = a;
+    });
+    playAnim('idle');
+    modelReady = true;
+    statusEl.textContent = 'Soldier.glb';
+    statusEl.className   = 'ok';
+  },
+  undefined,
+  function() {
+    statusEl.textContent = 'Model failed';
+    statusEl.className   = 'err';
+  }
+);
+
+// ── VEHICLE ───────────────────────────────────────────────────────────────────
+var VEH_SPAWN      = new THREE.Vector3(10, 0, 8);
+var VEH_TARGET_LEN = 4.5;
+var vehMesh        = null;
+var vehLoaded      = false;
+var inVehicle      = false;
+var carRevBlend    = Math.PI;
+var carCamYaw      = 0;
+var carCamPitch    = 0.32;
+
+var vehState = {
+  pos: new THREE.Vector3().copy(VEH_SPAWN),
+  yaw: 0, speed: 0, groundY: 0,
+  hw: 1.0, hd: 2.0, height: 1.4
+};
+
+function applyVehTransform() {
+  if (!vehMesh) return;
+  vehMesh.position.set(vehState.pos.x, vehState.groundY, vehState.pos.z);
+  vehMesh.rotation.y = vehState.yaw;
+}
+
+function makeBoxCar() {
+  var g    = new THREE.Group();
+  var body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.55, 4.0),
+               new THREE.MeshStandardMaterial({ color: 0x223355, roughness: 0.5 }));
+  body.position.y = 0.28; body.castShadow = true; g.add(body);
+  var cab = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.55, 2.0),
+              new THREE.MeshStandardMaterial({ color: 0x334466, roughness: 0.4 }));
+  cab.position.set(0, 0.83, -0.1); g.add(cab);
+  [[-0.95,0.35,1.3],[0.95,0.35,1.3],[-0.95,0.35,-1.3],[0.95,0.35,-1.3]].forEach(function(p) {
+    var w = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.25, 14),
+              new THREE.MeshStandardMaterial({ color: 0x111111 }));
+    w.rotation.z = Math.PI / 2; w.position.set(p[0], p[1], p[2]);
+    w.castShadow = true; g.add(w);
+  });
+  vehState.hw = 0.9; vehState.hd = 2.0; vehState.height = 1.4; vehState.groundY = 0;
+  return g;
+}
+
+gltfLoader.load(
+  'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/main/2.0/ToyCar/glTF-Binary/ToyCar.glb',
+  function(gltf) {
+    vehMesh = gltf.scene;
+    vehMesh.traverse(function(o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    var box = new THREE.Box3().setFromObject(vehMesh);
+    var sz  = new THREE.Vector3(); box.getSize(sz);
+    vehMesh.scale.setScalar(VEH_TARGET_LEN / Math.max(sz.x, sz.z, 0.1));
+    box.setFromObject(vehMesh); box.getSize(sz);
+    vehState.hw = sz.x * 0.5; vehState.hd = sz.z * 0.5; vehState.height = sz.y;
+    scene.add(vehMesh); vehLoaded = true; applyVehTransform();
+  },
+  undefined,
+  function() {
+    vehMesh = makeBoxCar(); scene.add(vehMesh); vehLoaded = true; applyVehTransform();
+  }
+);
+
+// ── PLAYER PHYSICS ────────────────────────────────────────────────────────────
+var playerYaw   = 0;
+var velocityY   = 0;
+var isGrounded  = true;
+var wasGrounded = true;
+var isJumping   = false;
+var jumpPhase   = 0;
+var isClimbing  = false;
+var climbProgress = 0, climbTargetY = 0, climbStartY = 0;
+var climbFwdX   = 0, climbFwdZ = 1;
+var isLanding   = false;
+var landTimer   = 0;
+var bodyLean    = 0;
+var camBobTime  = 0, camBobAmt = 0;
+
+var WALK_SPEED  = 3.5;
+var RUN_SPEED   = 8.0;
+var GRAVITY     = -18.0;
+var JUMP_FORCE  = 6.5;
+var LAND_DUR    = 0.5;
+var CLIMB_SPEED = 2.5;
+var CLIMB_REACH = 0.65;
+var CLIMB_MAX_H = 2.0;
+var PLAYER_R    = 0.38;
+
+// ── CAMERA ────────────────────────────────────────────────────────────────────
+var camYaw   = 0;
+var camPitch = 0.28;
+var camDist  = 4.5;
+var CAM_PITCH_MIN = 0.06, CAM_PITCH_MAX = 1.15;
+var CAM_DIST_MIN  = 1.5,  CAM_DIST_MAX  = 14.0;
+var camTarget = new THREE.Vector3();
+var camSmooth = new THREE.Vector3();
+
+// ── INPUT ─────────────────────────────────────────────────────────────────────
+var keys     = {};
+var mouseDX  = 0, mouseDY = 0;
+var isLocked = false;
+var isRMB    = false;
+var paused   = false;
+
+// Touch joystick state (updated by touch code below)
+var touchKeys = { fwd: false, back: false, left: false, right: false, sprint: false };
+var isTouch   = false;
+
+document.addEventListener('keydown', function(e) { keys[e.code] = true; });
+document.addEventListener('keyup',   function(e) { keys[e.code] = false; });
+
+document.addEventListener('mousemove', function(e) {
+  if ((isLocked || isTouch) && !paused) { mouseDX += e.movementX; mouseDY += e.movementY; }
+});
+canvas.addEventListener('mousedown', function(e) {
+  if (e.button === 0 && !paused) canvas.requestPointerLock();
+  if (e.button === 2) isRMB = true;
+});
+document.addEventListener('mouseup', function(e) { if (e.button === 2) isRMB = false; });
+canvas.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+document.addEventListener('pointerlockchange', function() { isLocked = !!document.pointerLockElement; });
+canvas.addEventListener('wheel', function(e) {
+  camDist = Math.max(CAM_DIST_MIN, Math.min(CAM_DIST_MAX, camDist + e.deltaY * 0.012));
+}, { passive: true });
+
+// ── JUMP / CLIMB helper ───────────────────────────────────────────────────────
+function tryJumpOrClimb() {
+  if (!isGrounded || isJumping || isClimbing || inVehicle) return;
+  var fwdX = Math.sin(playerYaw), fwdZ = Math.cos(playerYaw);
+  for (var i = 0; i < obstacles.length; i++) {
+    var o = obstacles[i];
+    var near = Math.max(
+      Math.abs(pivot.position.x - o.x) - o.hw,
+      Math.abs(pivot.position.z - o.z) - o.hd
+    ) < CLIMB_REACH;
+    if (near && o.h <= CLIMB_MAX_H) {
+      isClimbing = true; climbTargetY = o.h; climbStartY = pivot.position.y;
+      climbProgress = 0; climbFwdX = fwdX; climbFwdZ = fwdZ;
+      return;
+    }
+  }
+  velocityY = JUMP_FORCE; isJumping = true; isGrounded = false; jumpPhase = 1;
+}
+
+// ── ENTER/EXIT VEHICLE helper ─────────────────────────────────────────────────
+function canEnterVehicle() {
+  return vehLoaded && vehState.pos.distanceTo(pivot.position) < 5.0;
+}
+function enterVehicle() {
+  inVehicle = true;
+  if (playerModel) playerModel.visible = false;
+}
+function exitVehicle() {
+  inVehicle = false;
+  if (playerModel) playerModel.visible = true;
+  var cx = Math.cos(vehState.yaw) * (vehState.hw + 1.1);
+  var cz = -Math.sin(vehState.yaw) * (vehState.hw + 1.1);
+  pivot.position.set(vehState.pos.x + cx, vehState.groundY, vehState.pos.z + cz);
+  playerYaw = vehState.yaw; velocityY = 0; isGrounded = true;
+}
+function tryEnterExit() {
+  if (!inVehicle && canEnterVehicle()) enterVehicle();
+  else if (inVehicle) exitVehicle();
+}
+
+// ── KEYBOARD EVENTS ───────────────────────────────────────────────────────────
+document.addEventListener('keydown', function(e) {
+  if (paused) { if (e.code === 'Escape') setPause(false); return; }
+  if (e.code === 'Space') { e.preventDefault(); tryJumpOrClimb(); }
+  if (e.code === 'KeyF')  { tryEnterExit(); }
+  if (e.code === 'Escape') { setPause(true); }
+});
+
+// ── PAUSE ─────────────────────────────────────────────────────────────────────
+var pauseEl = document.getElementById('pause');
+function setPause(v) {
+  paused = v;
+  pauseEl.classList.toggle('on', v);
+  if (v && isLocked) document.exitPointerLock();
+}
+document.getElementById('p-resume').onclick = function() { setPause(false); };
+document.getElementById('p-reset').onclick  = function() {
+  pivot.position.set(0, 0, 0); playerYaw = 0; velocityY = 0;
+  isJumping = false; isGrounded = true; isClimbing = false; isLanding = false;
+  curName = ''; playAnim('idle'); setPause(false);
+};
+
+// ── VEHICLE UPDATE ────────────────────────────────────────────────────────────
+var VEH_MAX = 12, VEH_ACCEL = 8, VEH_BRAKE = 14, VEH_DRAG = 3, VEH_TURN = 1.8;
+var tbEnter = document.getElementById('tb-enter');
+
+function updateVehicle(dt) {
+  if (!vehLoaded) return;
+  if (inVehicle) {
+    var vFwd  = keys['KeyW'] || keys['ArrowUp']    || touchKeys.fwd;
+    var vBack = keys['KeyS'] || keys['ArrowDown']  || touchKeys.back;
+    var vLeft = keys['KeyA'] || keys['ArrowLeft']  || touchKeys.left;
+    var vRght = keys['KeyD'] || keys['ArrowRight'] || touchKeys.right;
+
+    if (vFwd)  vehState.speed = Math.min(vehState.speed + VEH_ACCEL * dt, VEH_MAX);
+    if (vBack) vehState.speed = Math.max(vehState.speed - VEH_BRAKE * dt, -VEH_MAX * 0.5);
+    if (!vFwd && !vBack) {
+      var drag = VEH_DRAG * dt * Math.sign(vehState.speed);
+      vehState.speed = Math.abs(vehState.speed) < 0.1 ? 0 : vehState.speed - drag;
+    }
+    var sf = Math.abs(vehState.speed) / VEH_MAX;
+    if (vehState.speed !== 0) {
+      var dir = Math.sign(vehState.speed);
+      if (vLeft) vehState.yaw += VEH_TURN * sf * dir * dt;
+      if (vRght) vehState.yaw -= VEH_TURN * sf * dir * dt;
+    }
+    vehState.pos.x += Math.sin(vehState.yaw) * vehState.speed * dt;
+    vehState.pos.z += Math.cos(vehState.yaw) * vehState.speed * dt;
+    applyVehTransform();
+
+    // Vehicle camera
+    if (isRMB) {
+      carCamYaw   -= mouseDX * 0.003;
+      carCamPitch -= mouseDY * 0.003;
+      carCamPitch  = Math.max(0.05, Math.min(1.1, carCamPitch));
+    } else {
+      carCamYaw *= 0.88;
+    }
+    var revTarget = vehState.speed < -0.3 ? 0 : Math.PI;
+    carRevBlend  += (revTarget - carRevBlend) * Math.min(1, 5 * dt);
+    var cyaw  = vehState.yaw + carCamYaw + carRevBlend;
+    var cdist = 7, cpitch = carCamPitch;
+    camera.position.lerp(new THREE.Vector3(
+      vehState.pos.x + cdist * Math.sin(cyaw) * Math.cos(cpitch),
+      vehState.groundY + cdist * Math.sin(cpitch),
+      vehState.pos.z + cdist * Math.cos(cyaw) * Math.cos(cpitch)
+    ), Math.min(1, 8 * dt));
+    camera.lookAt(new THREE.Vector3(vehState.pos.x, vehState.groundY + 1.2, vehState.pos.z));
+    mouseDX = mouseDY = 0;
+  } else {
+    vehState.speed *= 0.85;
+  }
+  // Enter button visibility
+  var showEnter = (canEnterVehicle() && !inVehicle) || inVehicle;
+  tbEnter.classList.toggle('show', showEnter && isTouch);
+  tbEnter.textContent = inVehicle ? 'EXIT' : 'ENTER';
+}
+
+// ── ANIM TAGS ─────────────────────────────────────────────────────────────────
+var tagMap = { idle:'t-idle', walk:'t-walk', run:'t-run', jump:'t-jump', fall:'t-fall', land:'t-land', climb:'t-climb' };
+function setTag(name) {
+  Object.keys(tagMap).forEach(function(k) {
+    document.getElementById(tagMap[k]).classList.toggle('on', k === name);
+  });
+}
+
+// ── TOUCH CONTROLS ────────────────────────────────────────────────────────────
+(function initTouch() {
+  if (!window.matchMedia('(pointer:coarse)').matches) return;
+
+  isTouch = true;
+  document.getElementById('touch-ui').style.display = 'block';
+  document.getElementById('kb-hint').style.display  = 'none';
+
+  var joyZone   = document.getElementById('joy-zone');
+  var joyBase   = document.getElementById('joy-base');
+  var joyKnob   = document.getElementById('joy-knob');
+  var lookZone  = document.getElementById('look-zone');
+  var tbSprint  = document.getElementById('tb-sprint');
+  var tbJump    = document.getElementById('tb-jump');
+  var tbEnterEl = document.getElementById('tb-enter');
+
+  var JOY_R = 46;
+  var joyId = -1, joyOX = 0, joyOY = 0;
+  var lookId = -1, lookLX = 0, lookLY = 0;
+
+  function updateJoy(nx, ny) {
+    touchKeys.fwd   = ny >  0.25;
+    touchKeys.back  = ny < -0.25;
+    touchKeys.left  = nx < -0.25;
+    touchKeys.right = nx >  0.25;
+  }
+
+  // Joystick
+  joyZone.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    var t = e.changedTouches[0];
+    if (joyId !== -1) return;
+    joyId = t.identifier; joyOX = t.clientX; joyOY = t.clientY;
+    var r = joyZone.getBoundingClientRect();
+    joyBase.style.left    = (t.clientX - r.left - 59) + 'px';
+    joyBase.style.top     = (t.clientY - r.top  - 59) + 'px';
+    joyBase.style.display = 'block';
+  }, { passive: false });
+
+  joyZone.addEventListener('touchmove', function(e) {
+    e.preventDefault();
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      var t = e.changedTouches[i];
+      if (t.identifier !== joyId) continue;
+      var dx = t.clientX - joyOX, dy = t.clientY - joyOY;
+      var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      var cl = Math.min(dist, JOY_R);
+      var ax = dx / dist, ay = dy / dist;
+      joyKnob.style.transform = 'translate(calc(-50% + ' + (ax * cl) + 'px), calc(-50% + ' + (ay * cl) + 'px))';
+      updateJoy(dx / Math.max(dist, JOY_R), -dy / Math.max(dist, JOY_R));
+    }
+  }, { passive: false });
+
+  function joyEnd(e) {
+    e.preventDefault();
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      if (e.changedTouches[i].identifier === joyId) {
+        joyId = -1;
+        joyKnob.style.transform = 'translate(-50%,-50%)';
+        joyBase.style.display = 'none';
+        updateJoy(0, 0);
+        break;
+      }
+    }
+  }
+  joyZone.addEventListener('touchend',    joyEnd, { passive: false });
+  joyZone.addEventListener('touchcancel', joyEnd, { passive: false });
+
+  // Look zone
+  lookZone.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    var t = e.changedTouches[0];
+    if (lookId !== -1) return;
+    lookId = t.identifier; lookLX = t.clientX; lookLY = t.clientY;
+  }, { passive: false });
+
+  lookZone.addEventListener('touchmove', function(e) {
+    e.preventDefault();
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      var t = e.changedTouches[i];
+      if (t.identifier !== lookId) continue;
+      mouseDX += (t.clientX - lookLX) * 1.5;
+      mouseDY += (t.clientY - lookLY) * 1.5;
+      lookLX = t.clientX; lookLY = t.clientY;
+    }
+  }, { passive: false });
+
+  function lookEnd(e) {
+    e.preventDefault();
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      if (e.changedTouches[i].identifier === lookId) { lookId = -1; break; }
+    }
+  }
+  lookZone.addEventListener('touchend',    lookEnd, { passive: false });
+  lookZone.addEventListener('touchcancel', lookEnd, { passive: false });
+
+  // Sprint toggle
+  tbSprint.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    touchKeys.sprint = !touchKeys.sprint;
+    tbSprint.classList.toggle('on', touchKeys.sprint);
+  }, { passive: false });
+
+  // Jump
+  tbJump.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    tbJump.style.background = 'rgba(100,170,255,0.25)';
+    tryJumpOrClimb();
+  }, { passive: false });
+  tbJump.addEventListener('touchend', function(e) {
+    e.preventDefault();
+    tbJump.style.background = '';
+  }, { passive: false });
+
+  // Enter/exit
+  tbEnterEl.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    tryEnterExit();
+  }, { passive: false });
+})();
+
+// ── MAIN LOOP ─────────────────────────────────────────────────────────────────
+var clock   = new THREE.Clock();
+var moveVec = new THREE.Vector3();
+
+function animate() {
+  requestAnimationFrame(animate);
+  var dt = Math.min(clock.getDelta(), 0.05);
+  if (paused) { renderer.render(scene, camera); return; }
+  if (mixer)  mixer.update(dt);
+
+  if (!inVehicle) {
+    var fwd    = keys['KeyW']     || keys['ArrowUp']    || touchKeys.fwd;
+    var back   = keys['KeyS']     || keys['ArrowDown']  || touchKeys.back;
+    var left   = keys['KeyA']     || keys['ArrowLeft']  || touchKeys.left;
+    var rght   = keys['KeyD']     || keys['ArrowRight'] || touchKeys.right;
+    var sprint = keys['ShiftLeft']|| keys['ShiftRight'] || touchKeys.sprint;
+    var moving = fwd || back || left || rght;
+    var speed  = sprint ? RUN_SPEED : WALK_SPEED;
+
+    // Camera / player yaw from mouse or touch look
+    if (isLocked || isTouch) {
+      if (!isRMB) playerYaw -= mouseDX * 0.003;
+      else        camYaw    -= mouseDX * 0.003;
+      camPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, camPitch - mouseDY * 0.003));
+    }
+    mouseDX = mouseDY = 0;
+    if (!isRMB) camYaw *= 0.88;
+
+    // Movement
+    if (moving && !isClimbing) {
+      var fwdX = Math.sin(playerYaw), fwdZ = Math.cos(playerYaw);
+      var rgtX = Math.cos(playerYaw), rgtZ = -Math.sin(playerYaw);
+      moveVec.set(0, 0, 0);
+      if (fwd)  { moveVec.x += fwdX; moveVec.z += fwdZ; }
+      if (back) { moveVec.x -= fwdX; moveVec.z -= fwdZ; }
+      if (left) { moveVec.x += rgtX; moveVec.z += rgtZ; }
+      if (rght) { moveVec.x -= rgtX; moveVec.z -= rgtZ; }
+      if (moveVec.lengthSq() > 0) {
+        moveVec.normalize();
+        pivot.position.addScaledVector(moveVec, speed * dt);
+      }
+    }
+
+    // Gravity
+    if (!isClimbing) {
+      var gndY = 0;
+      for (var gi = 0; gi < obstacles.length; gi++) {
+        var go = obstacles[gi];
+        if (Math.abs(pivot.position.x - go.x) <= go.hw + PLAYER_R &&
+            Math.abs(pivot.position.z - go.z) <= go.hd + PLAYER_R) {
+          gndY = Math.max(gndY, go.h);
+        }
+      }
+      velocityY += GRAVITY * dt;
+      pivot.position.y += velocityY * dt;
+      if (pivot.position.y <= gndY) {
+        if (!wasGrounded && velocityY < -2) { isLanding = true; landTimer = LAND_DUR; }
+        pivot.position.y = gndY; velocityY = 0;
+        isGrounded = true; isJumping = false; jumpPhase = 0;
+      } else {
+        isGrounded = false;
+        jumpPhase  = velocityY > 0 ? 1 : 2;
+      }
+      wasGrounded = isGrounded;
+      if (isLanding) { landTimer -= dt; if (landTimer <= 0) isLanding = false; }
+    }
+
+    // Climb
+    if (isClimbing) {
+      climbProgress += CLIMB_SPEED * dt;
+      pivot.position.y = THREE.MathUtils.lerp(climbStartY, climbTargetY, Math.min(climbProgress / 0.6, 1));
+      if (climbProgress >= 0.6) {
+        pivot.position.x += climbFwdX * CLIMB_SPEED * 0.7 * dt;
+        pivot.position.z += climbFwdZ * CLIMB_SPEED * 0.7 * dt;
+      }
+      if (climbProgress >= 1.0) {
+        isClimbing = false; isGrounded = true;
+        climbProgress = 0; pivot.position.y = climbTargetY;
+      }
+    }
+
+    // XZ push-out collision
+    for (var ci = 0; ci < obstacles.length; ci++) {
+      var co = obstacles[ci];
+      var cdx = pivot.position.x - co.x, cdz = pivot.position.z - co.z;
+      var cox = (co.hw + PLAYER_R) - Math.abs(cdx);
+      var coz = (co.hd + PLAYER_R) - Math.abs(cdz);
+      if (cox > 0 && coz > 0) {
+        if (cox < coz) pivot.position.x += cox * Math.sign(cdx);
+        else           pivot.position.z += coz * Math.sign(cdz);
+      }
+    }
+
+    pivot.rotation.y = playerYaw;
+
+    // Animation
+    var animName = 'idle';
+    if      (isClimbing)                     animName = 'climb';
+    else if (!isGrounded && jumpPhase === 1) animName = 'jump';
+    else if (!isGrounded && jumpPhase === 2) animName = 'fall';
+    else if (isLanding)                      animName = 'land';
+    else if (moving && sprint)               animName = 'run';
+    else if (moving)                         animName = 'walk';
+
+    if (modelReady) playAnim(actions[animName] ? animName : 'idle', animName === 'jump' ? 0.1 : 0.22, animName !== 'jump');
+    setTag(animName);
+
+    // Body lean
+    var leanT = left ? -1 : (rght ? 1 : 0);
+    bodyLean += (leanT - bodyLean) * Math.min(1, 8 * dt);
+    if (spineBone) spineBone.rotation.z = bodyLean * 0.18;
+
+    // Camera bob
+    var bobTarget = (moving && isGrounded) ? (sprint ? 1.0 : 0.5) : 0;
+    camBobAmt += (bobTarget - camBobAmt) * Math.min(1, 6 * dt);
+    if (moving && isGrounded) camBobTime += dt * (sprint ? 12 : 8);
+    var bobY = Math.sin(camBobTime) * 0.055 * camBobAmt;
+    var bobX = Math.cos(camBobTime * 0.5) * 0.025 * camBobAmt;
+    var landImpact = isLanding ? Math.sin((1 - landTimer / LAND_DUR) * Math.PI) * 0.1 : 0;
+
+    // Camera
+    var totalYaw = playerYaw + Math.PI + camYaw;
+    camTarget.set(pivot.position.x - Math.cos(playerYaw) * 0.8, pivot.position.y + 1.4, pivot.position.z + Math.sin(playerYaw) * 0.8);
+    camSmooth.lerp(camTarget, Math.min(1, 12 * dt));
+    camera.position.set(
+      camSmooth.x + camDist * Math.sin(totalYaw) * Math.cos(camPitch),
+      Math.max(0.4, camSmooth.y + camDist * Math.sin(camPitch)),
+      camSmooth.z + camDist * Math.cos(totalYaw) * Math.cos(camPitch)
+    );
+    camera.lookAt(new THREE.Vector3(camSmooth.x + bobX, camSmooth.y + bobY + landImpact, camSmooth.z));
+
+    // HUD
+    document.getElementById('h-state').textContent = animName.toUpperCase();
+    document.getElementById('h-speed').textContent = (moving ? speed : 0).toFixed(1);
+    document.getElementById('h-pos').textContent   =
+      pivot.position.x.toFixed(1) + ',' + pivot.position.y.toFixed(1) + ',' + pivot.position.z.toFixed(1);
+    document.getElementById('h-cam').textContent   = isTouch ? 'TOUCH' : (isRMB ? 'FREE' : 'LOCKED');
+    document.getElementById('h-veh').textContent   = vehLoaded
+      ? (inVehicle ? 'DRIVING' : Math.round(pivot.position.distanceTo(vehState.pos)) + 'u')
+      : 'Loading...';
+  } else {
+    document.getElementById('h-state').textContent = 'DRIVING';
+    document.getElementById('h-speed').textContent = Math.abs(vehState.speed).toFixed(1);
+    document.getElementById('h-veh').textContent   = 'IN VEHICLE';
+  }
+
+  updateVehicle(dt);
+  renderer.render(scene, camera);
+}
+
+animate();
+</script>
+</body>
+</html>
